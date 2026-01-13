@@ -3,62 +3,79 @@ import whisper
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import numpy as np
+import tempfile
+import os
 
-# --- Load Models (once) ---
-@st.cache(allow_output_mutation=True)
-def load_speech_model():
-    return whisper.load_model("small")  # multilingual
+# ---------------- PAGE SETUP ----------------
+st.set_page_config(page_title="MP3 Sentiment Analyzer", layout="centered")
 
-@st.cache(allow_output_mutation=True)
-def load_sentiment_model():
-    model_name = "nlptown/bert-base-multilingual-uncased-sentiment"
-    tok = AutoTokenizer.from_pretrained(model_name)
-    mod = AutoModelForSequenceClassification.from_pretrained(model_name)
-    return tok, mod
-
-speech_model = load_speech_model()
-sent_tok, sent_model = load_sentiment_model()
-
-# --- Streamlit UI ---
 st.title("🌐 MP3 → Text Sentiment Analyzer")
-st.write("Upload an MP3 in English or any Indian language and get sentiment.")
+st.write(
+    "Upload an MP3 audio file in **English or any Indian language** "
+    "to get transcription and sentiment analysis."
+)
 
-mp3_file = st.file_uploader("Upload MP3 Audio File", type=["mp3"])
+# ---------------- FILE UPLOAD ----------------
+uploaded_file = st.file_uploader(
+    "Upload MP3 file",
+    type=["mp3"],
+    help="Supported: English, Hindi, Tamil, Telugu, Malayalam, Kannada, Bengali, Marathi, etc."
+)
 
-if mp3_file:
-    # Save temporary mp3
-    with open("audio.mp3", "wb") as f:
-        f.write(mp3_file.getbuffer())
-        
-    st.info("Transcribing audio…")
-    # Whisper transcription
-    result = speech_model.transcribe("audio.mp3")
-    text = result.get("text", "").strip()
-    
-    if not text:
-        st.error("No speech detected or could not transcribe.")
+# ---------------- RUN ONLY AFTER UPLOAD ----------------
+if uploaded_file is not None:
+    with st.spinner("Loading models..."):
+        # Load models lazily AFTER upload
+        speech_model = whisper.load_model("small")
+
+        sentiment_model_name = "nlptown/bert-base-multilingual-uncased-sentiment"
+        sent_tokenizer = AutoTokenizer.from_pretrained(sentiment_model_name)
+        sent_model = AutoModelForSequenceClassification.from_pretrained(sentiment_model_name)
+
+    # Save MP3 to temp file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+        tmp.write(uploaded_file.read())
+        audio_path = tmp.name
+
+    # ---------------- TRANSCRIPTION ----------------
+    st.subheader("🎧 Transcription")
+    with st.spinner("Transcribing audio..."):
+        result = speech_model.transcribe(audio_path)
+        transcription = result.get("text", "").strip()
+
+    if not transcription:
+        st.error("No speech detected in the audio.")
     else:
-        st.subheader("📜 Transcription")
-        st.write(text)
-        
-        # Sentiment analysis
-        st.info("Analyzing sentiment…")
-        inputs = sent_tok(text, return_tensors="pt", padding=True, truncation=True)
-        outputs = sent_model(**inputs)
-        
-        scores = outputs.logits.detach().cpu().numpy()[0]
-        # For nlptown: 1–5 stars
-        probs = torch.nn.functional.softmax(torch.tensor(scores), dim=0).numpy()
-        
-        labels = ["⭐️", "⭐️⭐️", "⭐️⭐️⭐️", "⭐️⭐️⭐️⭐️", "⭐️⭐️⭐️⭐️⭐️"]
+        st.write(transcription)
+
+        # ---------------- SENTIMENT ANALYSIS ----------------
+        st.subheader("🧠 Sentiment Analysis")
+        with st.spinner("Analyzing sentiment..."):
+            inputs = sent_tokenizer(
+                transcription,
+                return_tensors="pt",
+                truncation=True,
+                padding=True
+            )
+            outputs = sent_model(**inputs)
+
+            scores = outputs.logits.detach().cpu().numpy()[0]
+            probs = torch.nn.functional.softmax(torch.tensor(scores), dim=0).numpy()
+
+        labels = ["⭐️ Very Negative", "⭐️⭐️ Negative", "⭐️⭐️⭐️ Neutral", "⭐️⭐️⭐️⭐️ Positive", "⭐️⭐️⭐️⭐️⭐️ Very Positive"]
+
         sentiment = labels[np.argmax(probs)]
-        confidence = np.max(probs)
+        confidence = float(np.max(probs))
 
-        st.subheader("🧠 Sentiment")
-        st.write(f"**Sentiment:** {sentiment}  |  **Confidence:** {confidence:.2f}")
-        
-        # Optional: score-by-class
-        with st.expander("Show All Sentiment Scores"):
-            for lbl, p in zip(labels, probs):
-                st.write(f"{lbl}: {p:.3f}")
+        st.success(f"**Sentiment:** {sentiment}")
+        st.write(f"**Confidence:** {confidence:.2f}")
 
+        with st.expander("📊 Sentiment Probability Breakdown"):
+            for label, prob in zip(labels, probs):
+                st.write(f"{label}: {prob:.3f}")
+
+    # Cleanup
+    os.remove(audio_path)
+
+else:
+    st.info("👆 Please upload an MP3 file to start analysis.")
