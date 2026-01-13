@@ -7,12 +7,12 @@ import tempfile
 import os
 
 # ---------------- PAGE SETUP ----------------
-st.set_page_config(page_title="MP3 Sentiment Analyzer", layout="centered")
+st.set_page_config(page_title="MP3 Call Quality Analyzer", layout="centered")
 
-st.title("🌐 MP3 → Text Sentiment Analyzer")
+st.title("📞 MP3 → Call Quality & Sentiment Analyzer")
 st.write(
-    "Upload an MP3 audio file in **English or any Indian language** "
-    "to get transcription and sentiment analysis."
+    "Upload an MP3 audio file in **English or Indian languages** "
+    "to get transcription, sentiment, and **1–10 quality ratings**."
 )
 
 # ---------------- MODEL LOADING (CACHED) ----------------
@@ -31,6 +31,50 @@ def load_models():
     return speech_model, sent_tokenizer, sent_model, device
 
 
+# ---------------- SCORING LOGIC ----------------
+sentiment_to_score = {
+    0: 2,   # Very Negative
+    1: 4,   # Negative
+    2: 6,   # Neutral
+    3: 8,   # Positive
+    4: 10   # Very Positive
+}
+
+PRODUCT_KEYWORDS = [
+    "price", "cost", "plan", "package", "features",
+    "subscription", "demo", "trial", "details"
+]
+
+LEAD_KEYWORDS = [
+    "interested", "call me", "contact me", "follow up",
+    "sign up", "next steps", "email me"
+]
+
+NEGATIVE_WORDS = [
+    "problem", "issue", "complaint", "bad",
+    "worst", "refund", "angry"
+]
+
+def customer_tone_score(sentiment_idx, text):
+    base = sentiment_to_score[sentiment_idx]
+    penalty = sum(word in text.lower() for word in NEGATIVE_WORDS)
+    return max(1, min(10, base - penalty))
+
+def agent_tone_score(sentiment_idx):
+    return sentiment_to_score[sentiment_idx]
+
+def product_enquiry_score(text):
+    matches = sum(word in text.lower() for word in PRODUCT_KEYWORDS)
+    return min(10, matches * 2)
+
+def lead_generation_score(text):
+    matches = sum(word in text.lower() for word in LEAD_KEYWORDS)
+    return min(10, matches * 3)
+
+def overall_score(scores):
+    return round(sum(scores) / len(scores), 1)
+
+
 # ---------------- FILE UPLOAD ----------------
 uploaded_file = st.file_uploader(
     "Upload MP3 file",
@@ -43,7 +87,6 @@ if uploaded_file is not None:
     with st.spinner("Loading models..."):
         speech_model, sent_tokenizer, sent_model, device = load_models()
 
-    # Save MP3 to temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
         tmp.write(uploaded_file.read())
         audio_path = tmp.name
@@ -77,26 +120,48 @@ if uploaded_file is not None:
                     outputs.logits, dim=1
                 ).cpu().numpy()[0]
 
+            sentiment_idx = int(np.argmax(probs))
+
             labels = [
-                "⭐️ Very Negative",
-                "⭐️⭐️ Negative",
-                "⭐️⭐️⭐️ Neutral",
-                "⭐️⭐️⭐️⭐️ Positive",
-                "⭐️⭐️⭐️⭐️⭐️ Very Positive"
+                "Very Negative",
+                "Negative",
+                "Neutral",
+                "Positive",
+                "Very Positive"
             ]
 
-            sentiment = labels[int(np.argmax(probs))]
-            confidence = float(np.max(probs))
+            st.success(f"**Sentiment:** {labels[sentiment_idx]}")
 
-            st.success(f"**Sentiment:** {sentiment}")
-            st.write(f"**Confidence:** {confidence:.2f}")
+            # ---------------- BUSINESS RATINGS ----------------
+            customer_tone = customer_tone_score(sentiment_idx, transcription)
+            agent_tone = agent_tone_score(sentiment_idx)
+            product_score = product_enquiry_score(transcription)
+            lead_score = lead_generation_score(transcription)
 
-            with st.expander("📊 Sentiment Probability Breakdown"):
+            overall = overall_score([
+                customer_tone,
+                agent_tone,
+                product_score,
+                lead_score
+            ])
+
+            st.subheader("📊 Interaction Quality Ratings (1–10)")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Customer Tone", customer_tone)
+                st.metric("Product Enquiry Quality", product_score)
+            with col2:
+                st.metric("Agent Tone", agent_tone)
+                st.metric("Lead Generation Potential", lead_score)
+
+            st.metric("⭐ Overall Call Quality", overall)
+
+            with st.expander("📈 Sentiment Probability Breakdown"):
                 for label, prob in zip(labels, probs):
                     st.write(f"{label}: {prob:.3f}")
 
     finally:
-        # Cleanup temp file safely
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
