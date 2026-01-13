@@ -1,33 +1,35 @@
-# Complete Multilingual Call Analysis Dashboard with MP3 Support
-# Dashboard + Backend Analyzer | pip install streamlit torch transformers pydub speechrecognition plotly pandas numpy scikit-learn
-
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import torch
-import numpy as np
-from transformers import pipeline, WhisperProcessor, WhisperForConditionalGeneration
-import io
-from pathlib import Path
-import tempfile
-import warnings
-warnings.filterwarnings('ignore')
-from pydub import AudioSegment
-
-# Reuse the analyzer class from previous response
-class MultilingualCallAnalyzer:
-    def __init__(self):
-        self.whisper_processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
-        self.whisper_model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large-v3")
-        self.sentiment_pipe = pipeline("sentiment-analysis", 
-                                     model="cardiffnlp/twitter-xlm-roberta-base-sentiment")
-        self.emotion_pipe = pipeline("text-classification", model="vashuag/HindiEmotion")
-        
-        # Call center specific keywords (tailored for sales/customer service)
-        self.sales_keywords = ['buy', 'purchase', 'price', 'cost', 'deal', 'offer', 'subscription', 'upgrade', 'plan']
-        self.service_keywords = ['complaint', 'issue', 'problem', 'not working', 'refund', 'cancel', 'help', 'support']
+Python 3.13.7 (v3.13.7:bcee1c32211, Aug 14 2025, 19:10:51) [Clang 16.0.0 (clang-1600.0.26.6)] on darwin
+Enter "help" below or click "Help" above for more information.
+>>> # Complete Multilingual Call Analysis Dashboard with MP3 Support
+... # Dashboard + Backend Analyzer | pip install streamlit torch transformers pydub speechrecognition plotly pandas numpy scikit-learn
+... 
+... import streamlit as st
+... import pandas as pd
+... import plotly.express as px
+... import plotly.graph_objects as go
+... from plotly.subplots import make_subplots
+... import torch
+... import numpy as np
+... from transformers import pipeline, WhisperProcessor, WhisperForConditionalGeneration
+... import io
+... from pathlib import Path
+... import tempfile
+... import warnings
+... warnings.filterwarnings('ignore')
+... from pydub import AudioSegment
+... 
+... # Reuse the analyzer class from previous response
+... class MultilingualCallAnalyzer:
+...     def __init__(self):
+...         self.whisper_processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
+...         self.whisper_model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large-v3")
+...         self.sentiment_pipe = pipeline("sentiment-analysis", 
+...                                      model="cardiffnlp/twitter-xlm-roberta-base-sentiment")
+...         self.emotion_pipe = pipeline("text-classification", model="vashuag/HindiEmotion")
+...         
+...         # Call center specific keywords (tailored for sales/customer service)
+...         self.sales_keywords = ['buy', 'purchase', 'price', 'cost', 'deal', 'offer', 'subscription', 'upgrade', 'plan']
+...         self.service_keywords = ['complaint', 'issue', 'problem', 'not working', 'refund', 'cancel', 'help', 'support']
         self.products = ['phone', 'mobile', 'bike', 'ev', 'camera', 'laptop']  # User interests
         self.missed_ops_keywords = ['interested but', 'maybe later', 'think about', 'too expensive', 'compare']
     
