@@ -15,6 +15,22 @@ st.write(
     "to get transcription and sentiment analysis."
 )
 
+# ---------------- MODEL LOADING (CACHED) ----------------
+@st.cache_resource
+def load_models():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    speech_model = whisper.load_model("small").to(device)
+
+    sentiment_model_name = "nlptown/bert-base-multilingual-uncased-sentiment"
+    sent_tokenizer = AutoTokenizer.from_pretrained(sentiment_model_name)
+    sent_model = AutoModelForSequenceClassification.from_pretrained(
+        sentiment_model_name
+    ).to(device)
+
+    return speech_model, sent_tokenizer, sent_model, device
+
+
 # ---------------- FILE UPLOAD ----------------
 uploaded_file = st.file_uploader(
     "Upload MP3 file",
@@ -25,57 +41,64 @@ uploaded_file = st.file_uploader(
 # ---------------- RUN ONLY AFTER UPLOAD ----------------
 if uploaded_file is not None:
     with st.spinner("Loading models..."):
-        # Load models lazily AFTER upload
-        speech_model = whisper.load_model("small")
-
-        sentiment_model_name = "nlptown/bert-base-multilingual-uncased-sentiment"
-        sent_tokenizer = AutoTokenizer.from_pretrained(sentiment_model_name)
-        sent_model = AutoModelForSequenceClassification.from_pretrained(sentiment_model_name)
+        speech_model, sent_tokenizer, sent_model, device = load_models()
 
     # Save MP3 to temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
         tmp.write(uploaded_file.read())
         audio_path = tmp.name
 
-    # ---------------- TRANSCRIPTION ----------------
-    st.subheader("🎧 Transcription")
-    with st.spinner("Transcribing audio..."):
-        result = speech_model.transcribe(audio_path)
-        transcription = result.get("text", "").strip()
+    try:
+        # ---------------- TRANSCRIPTION ----------------
+        st.subheader("🎧 Transcription")
+        with st.spinner("Transcribing audio..."):
+            result = speech_model.transcribe(audio_path)
+            transcription = result.get("text", "").strip()
 
-    if not transcription:
-        st.error("No speech detected in the audio.")
-    else:
-        st.write(transcription)
+        if not transcription:
+            st.error("No speech detected in the audio.")
+        else:
+            st.write(transcription)
 
-        # ---------------- SENTIMENT ANALYSIS ----------------
-        st.subheader("🧠 Sentiment Analysis")
-        with st.spinner("Analyzing sentiment..."):
-            inputs = sent_tokenizer(
-                transcription,
-                return_tensors="pt",
-                truncation=True,
-                padding=True
-            )
-            outputs = sent_model(**inputs)
+            # ---------------- SENTIMENT ANALYSIS ----------------
+            st.subheader("🧠 Sentiment Analysis")
+            with st.spinner("Analyzing sentiment..."):
+                inputs = sent_tokenizer(
+                    transcription,
+                    return_tensors="pt",
+                    truncation=True,
+                    padding=True
+                ).to(device)
 
-            scores = outputs.logits.detach().cpu().numpy()[0]
-            probs = torch.nn.functional.softmax(torch.tensor(scores), dim=0).numpy()
+                with torch.no_grad():
+                    outputs = sent_model(**inputs)
 
-        labels = ["⭐️ Very Negative", "⭐️⭐️ Negative", "⭐️⭐️⭐️ Neutral", "⭐️⭐️⭐️⭐️ Positive", "⭐️⭐️⭐️⭐️⭐️ Very Positive"]
+                probs = torch.nn.functional.softmax(
+                    outputs.logits, dim=1
+                ).cpu().numpy()[0]
 
-        sentiment = labels[np.argmax(probs)]
-        confidence = float(np.max(probs))
+            labels = [
+                "⭐️ Very Negative",
+                "⭐️⭐️ Negative",
+                "⭐️⭐️⭐️ Neutral",
+                "⭐️⭐️⭐️⭐️ Positive",
+                "⭐️⭐️⭐️⭐️⭐️ Very Positive"
+            ]
 
-        st.success(f"**Sentiment:** {sentiment}")
-        st.write(f"**Confidence:** {confidence:.2f}")
+            sentiment = labels[int(np.argmax(probs))]
+            confidence = float(np.max(probs))
 
-        with st.expander("📊 Sentiment Probability Breakdown"):
-            for label, prob in zip(labels, probs):
-                st.write(f"{label}: {prob:.3f}")
+            st.success(f"**Sentiment:** {sentiment}")
+            st.write(f"**Confidence:** {confidence:.2f}")
 
-    # Cleanup
-    os.remove(audio_path)
+            with st.expander("📊 Sentiment Probability Breakdown"):
+                for label, prob in zip(labels, probs):
+                    st.write(f"{label}: {prob:.3f}")
+
+    finally:
+        # Cleanup temp file safely
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
 
 else:
     st.info("👆 Please upload an MP3 file to start analysis.")
