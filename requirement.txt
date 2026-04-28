@@ -3,3 +3,6 @@ pandas
 deep-translator
 openai-whisper
 ffmpeg-python
+streamlit
+vosk
+pydub
