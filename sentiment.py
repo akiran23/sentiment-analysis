@@ -1,40 +1,40 @@
 import streamlit as st
-from faster_whisper import WhisperModel
+import speech_recognition as sr
+from pydub import AudioSegment
 import tempfile
 import os
-
-# -----------------------------
-# Load Model (once)
-# -----------------------------
-@st.cache_resource
-def load_model():
-    return WhisperModel("base", compute_type="int8")
-
-model = load_model()
 
 # -----------------------------
 # UI
 # -----------------------------
 st.title("📞 Call QA Analyzer (No API Required)")
-st.write("Upload MP3/WAV → Get QA Score, Call Type, Violations")
+st.write("Upload MP3/WAV → Get Transcript, Call Type & QA Score")
 
 uploaded_file = st.file_uploader("Upload Audio File", type=["mp3", "wav"])
 
 # -----------------------------
-# Transcription (LOCAL)
+# Transcription (SpeechRecognition)
 # -----------------------------
 def transcribe_audio(file):
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        tmp.write(file.read())
+    recognizer = sr.Recognizer()
+
+    # Convert to WAV (required)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        audio = AudioSegment.from_file(file)
+        audio.export(tmp.name, format="wav")
         tmp_path = tmp.name
 
-    segments, _ = model.transcribe(tmp_path)
+    with sr.AudioFile(tmp_path) as source:
+        audio_data = recognizer.record(source)
 
-    transcript = " ".join([seg.text for seg in segments])
+    try:
+        text = recognizer.recognize_google(audio_data)
+    except:
+        text = "Could not transcribe audio"
 
     os.remove(tmp_path)
 
-    return transcript.lower()
+    return text.lower()
 
 # -----------------------------
 # Call Type Classification
@@ -56,7 +56,7 @@ def check_fatal(text):
     return any(p in text for p in fatal_phrases)
 
 def check_zero_tolerance(text):
-    rude_words = ["idiot", "stupid", "shut up", "useless", "angry tone"]
+    rude_words = ["idiot", "stupid", "shut up", "useless"]
     return any(w in text for w in rude_words)
 
 # -----------------------------
@@ -77,7 +77,7 @@ def evaluate_call(text, call_type):
     s["Paraphrasing"] = score("let me confirm" in text or "you mean" in text, 3)
     s["Proper Script"] = score("sir" in text or "madam" in text, 4)
     s["Closing Script"] = score("thank you" in text, 4)
-    s["Confirm Name"] = score("your name" in text, 3)
+    s["Confirm Name"] = score("your name" in text or "may i know your name" in text, 3)
 
     # Etiquette
     s["Hold Procedure"] = score("please hold" in text, 4)
@@ -126,7 +126,7 @@ def evaluate_call(text, call_type):
     return s, total, fatal, zero_tol
 
 # -----------------------------
-# MAIN EXECUTION
+# MAIN FLOW
 # -----------------------------
 if uploaded_file:
     st.info("⏳ Transcribing audio...")
