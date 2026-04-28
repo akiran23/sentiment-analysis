@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from langdetect import detect
+
 from deep_translator import GoogleTranslator
 
 # -----------------------------
