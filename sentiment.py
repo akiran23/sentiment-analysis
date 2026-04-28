@@ -1,159 +1,121 @@
 import streamlit as st
-import pandas as pd
-import whisper
-import tempfile
 import os
+import json
+import wave
+from vosk import Model, KaldiRecognizer
+from pydub import AudioSegment
 
-st.set_page_config(page_title="Audio Call QA Scoring", layout="wide")
-st.title("📞 Audio Call QA (Upload → Transcribe → Score)")
+# -------------------------------
+# Load Model
+# -------------------------------
+MODEL_PATH = "model"
+model = Model(MODEL_PATH)
 
-# -----------------------------
-# LOAD WHISPER MODEL (cached)
-# -----------------------------
-@st.cache_resource
-def load_model():
-    return whisper.load_model("base")  # use "small" or "medium" for better accuracy
+# -------------------------------
+# Convert Audio to WAV mono
+# -------------------------------
+def convert_to_wav(uploaded_file):
+    audio = AudioSegment.from_file(uploaded_file)
+    audio = audio.set_channels(1).set_frame_rate(16000)
+    wav_path = "temp.wav"
+    audio.export(wav_path, format="wav")
+    return wav_path
 
-model = load_model()
+# -------------------------------
+# Transcribe Audio
+# -------------------------------
+def transcribe_audio(wav_path):
+    wf = wave.open(wav_path, "rb")
+    rec = KaldiRecognizer(model, wf.getframerate())
 
-# -----------------------------
-# FILE UPLOAD
-# -----------------------------
-uploaded_file = st.file_uploader("Upload Call Audio", type=["mp3", "wav"])
+    text = ""
+    while True:
+        data = wf.readframes(4000)
+        if len(data) == 0:
+            break
+        if rec.AcceptWaveform(data):
+            res = json.loads(rec.Result())
+            text += " " + res.get("text", "")
 
-transcript = ""
+    final_res = json.loads(rec.FinalResult())
+    text += " " + final_res.get("text", "")
+    return text.lower()
+
+# -------------------------------
+# Classification: Sales vs Service
+# -------------------------------
+def classify_call(text):
+    sales_keywords = ["buy", "purchase", "offer", "loan", "interest rate", "scheme"]
+    service_keywords = ["issue", "problem", "complaint", "help", "support"]
+
+    sales_score = sum([1 for k in sales_keywords if k in text])
+    service_score = sum([1 for k in service_keywords if k in text])
+
+    return "Sales" if sales_score > service_score else "Service"
+
+# -------------------------------
+# Scoring Logic
+# -------------------------------
+def score_call(text, call_type):
+
+    scores = {}
+
+    # Fatal + Zero tolerance
+    rude_words = ["idiot", "stupid", "shut up"]
+    if any(word in text for word in rude_words):
+        return {"TOTAL": 0, "FATAL": True}
+
+    # Example rules (expandable)
+    scores["Opening"] = 3 if "hello" in text or "good morning" in text else 0
+    scores["Intro"] = 3 if "muthoot" in text else 0
+    scores["Closing"] = 4 if "thank you" in text else 0
+    scores["Politeness"] = 3 if "please" in text else 0
+    scores["Apology"] = 3 if "sorry" in text else 0
+    scores["Clarity"] = 4 if "uh" not in text else 0
+    scores["Professional"] = 3 if "sir" in text or "madam" in text else 0
+    scores["Ownership"] = 4 if "i will help" in text else 0
+    scores["Convincing"] = 10 if "benefit" in text else 0
+
+    # Cross-sell only for sales
+    if call_type == "Sales":
+        scores["CrossSell"] = 10 if "offer" in text else 0
+    else:
+        scores["CrossSell"] = 0
+
+    total = sum(scores.values())
+
+    return {
+        "TOTAL": total,
+        "FATAL": False,
+        "DETAILS": scores
+    }
+
+# -------------------------------
+# Streamlit UI
+# -------------------------------
+st.title("📞 Call QA Analyzer (No API Key)")
+
+uploaded_file = st.file_uploader("Upload Call Recording (MP3/WAV)")
 
 if uploaded_file:
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        temp_path = tmp_file.name
-
     st.audio(uploaded_file)
 
-    st.info("Transcribing audio...")
-
-    result = model.transcribe(temp_path)
-    transcript = result["text"]
+    with st.spinner("Processing..."):
+        wav_path = convert_to_wav(uploaded_file)
+        text = transcribe_audio(wav_path)
+        call_type = classify_call(text)
+        result = score_call(text, call_type)
 
     st.subheader("📝 Transcription")
-    st.write(transcript)
+    st.write(text)
 
-    os.remove(temp_path)
+    st.subheader("📊 Call Type")
+    st.write(call_type)
 
-# -----------------------------
-# CALL TYPE
-# -----------------------------
-call_type = st.radio("Select Call Type", ["Service", "Sales"])
+    st.subheader("📈 Score")
 
-# -----------------------------
-# SCORECARD
-# -----------------------------
-scorecard = [
-    {"bucket": "Script", "param": "Opening within 4 secs", "score": 3},
-    {"bucket": "Script", "param": "Proper greeting & branding", "score": 3},
-    {"bucket": "Script", "param": "Paraphrasing when needed", "score": 3},
-    {"bucket": "Script", "param": "Used proper scripts", "score": 4},
-    {"bucket": "Script", "param": "Proper closing", "score": 4},
-    {"bucket": "Script", "param": "Confirmed customer name", "score": 3},
-
-    {"bucket": "Etiquette", "param": "Proper hold usage", "score": 4},
-    {"bucket": "Etiquette", "param": "No dead air (<10 sec)", "score": 3},
-    {"bucket": "Etiquette", "param": "Proper mute usage", "score": 3},
-
-    {"bucket": "Clarity", "param": "No slang", "score": 4},
-    {"bucket": "Clarity", "param": "No fillers", "score": 4},
-    {"bucket": "Clarity", "param": "Customer understood agent", "score": 4},
-    {"bucket": "Clarity", "param": "Agent understood customer", "score": 4},
-    {"bucket": "Clarity", "param": "Tone was appropriate", "score": 4},
-
-    {"bucket": "Calmness", "param": "No interruption", "score": 5},
-    {"bucket": "Calmness", "param": "Confidence", "score": 5},
-
-    {"bucket": "Professionalism", "param": "No jargon", "score": 4},
-    {"bucket": "Professionalism", "param": "Professional behavior", "score": 3},
-    {"bucket": "Professionalism", "param": "Apology where needed", "score": 3},
-
-    {"bucket": "Rapport", "param": "Ownership", "score": 4},
-    {"bucket": "Rapport", "param": "Acknowledgement", "score": 3},
-    {"bucket": "Rapport", "param": "Probing", "score": 3},
-
-    {"bucket": "Objection", "param": "Convincing skills", "score": 10},
-    {"bucket": "Sales", "param": "Cross-sell", "score": 10},
-]
-
-fatal_checks = ["Correct solution provided?"]
-zero_tolerance = ["Agent rude/sarcastic?", "Abusive language used?"]
-
-# -----------------------------
-# SCORING UI
-# -----------------------------
-st.subheader("📊 Parameter-wise Scoring")
-
-results = []
-total_score = 0
-max_score = 0
-
-for item in scorecard:
-    if item["bucket"] == "Sales" and call_type != "Sales":
-        continue
-
-    col1, col2 = st.columns([4, 1])
-
-    with col1:
-        st.write(f"**{item['bucket']}** → {item['param']} ({item['score']})")
-
-    with col2:
-        choice = st.selectbox("", ["Full Score", "0"], key=item["param"])
-
-    score = item["score"] if choice == "Full Score" else 0
-
-    results.append({
-        "Bucket": item["bucket"],
-        "Parameter": item["param"],
-        "Max Score": item["score"],
-        "Score": score
-    })
-
-    total_score += score
-    max_score += item["score"]
-
-# -----------------------------
-# FATAL & ZT
-# -----------------------------
-st.subheader("🚨 Fatal Check")
-fatal = any(st.radio(q, ["Yes", "No"], key=q) == "No" for q in fatal_checks)
-
-st.subheader("⚠️ Zero Tolerance")
-zt = any(st.radio(q, ["No", "Yes"], key=q) == "Yes" for q in zero_tolerance)
-
-# -----------------------------
-# FINAL SCORE
-# -----------------------------
-if fatal or zt:
-    final_score = 0
-    status = "❌ AUTO FAIL"
-else:
-    final_score = total_score
-    status = "✅ PASS"
-
-# -----------------------------
-# OUTPUT
-# -----------------------------
-df = pd.DataFrame(results)
-
-st.subheader("📋 Scorecard")
-st.dataframe(df, use_container_width=True)
-
-st.subheader("📈 Final Score")
-st.metric("Score", f"{final_score} / {max_score}")
-st.write("Status:", status)
-
-# DOWNLOAD
-csv = df.to_csv(index=False).encode("utf-8")
-
-st.download_button(
-    "Download CSV",
-    csv,
-    "qa_scorecard.csv",
-    "text/csv"
-)
+    if result["FATAL"]:
+        st.error("❌ Fatal/Zero Tolerance Triggered → Score = 0")
+    else:
+        st.write("Total Score:", result["TOTAL"])
+        st.json(result["DETAILS"])
