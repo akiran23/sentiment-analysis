@@ -1,4 +1,5 @@
 import streamlit as st
+import langid
 import pandas as pd
 from langdetect import detect
 from deep_translator import GoogleTranslator
@@ -13,10 +14,8 @@ st.title("📞 AI Call QA Scoring System (Multilingual + Parameter-wise)")
 # LANGUAGE FUNCTIONS
 # -----------------------------
 def detect_language(text):
-    try:
-        return detect(text)
-    except:
-        return "unknown"
+    lang, _ = langid.classify(text)
+    return lang
 
 def translate_to_english(text):
     try:
