@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-deep_translator import GoogleTranslator
+from deep_translator import GoogleTranslator
 
 # -----------------------------
 # PAGE CONFIG
