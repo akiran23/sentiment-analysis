@@ -1,9 +1,4 @@
 streamlit
-pandas
-deep-translator
 openai-whisper
-ffmpeg-python
-streamlit
-vosk
-pydub
 torch==2.0.1
+pandas
