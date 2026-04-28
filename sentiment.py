@@ -1,35 +1,17 @@
 import streamlit as st
-import tempfile
-import os
-import re
 import pandas as pd
-from faster_whisper import WhisperModel
+import re
 
-# ---------------------------
-# Load Model (lightweight)
-# ---------------------------
-@st.cache_resource
-def load_model():
-    return WhisperModel("base", compute_type="int8")  # fast CPU
-
-model = load_model()
-
-# ---------------------------
-# Transcription
-# ---------------------------
-def transcribe_audio(file_path):
-    segments, _ = model.transcribe(file_path)
-    text = " ".join([seg.text for seg in segments])
-    return text.lower()
+st.set_page_config(page_title="Call QA Analyzer", layout="wide")
 
 # ---------------------------
 # Clean text
 # ---------------------------
 def clean_text(text):
-    return re.sub(r'[^a-zA-Z0-9\s]', '', text)
+    return re.sub(r'[^a-zA-Z0-9\s]', '', text.lower())
 
 # ---------------------------
-# Call Type Classification
+# Classification
 # ---------------------------
 def classify_call(text):
     sales_patterns = r"\b(buy|purchase|offer|loan|interest|scheme|benefit)\b"
@@ -41,13 +23,15 @@ def classify_call(text):
     return "Sales" if sales_score > service_score else "Service"
 
 # ---------------------------
-# QA Scoring
+# QA Scoring Engine
 # ---------------------------
 def score_call(text, call_type):
 
-    rude_words = ["idiot", "stupid", "shut up"]
+    rude_words = ["idiot", "stupid", "shut up", "nonsense"]
+
+    # ZERO TOLERANCE
     if any(word in text for word in rude_words):
-        return {"fatal": True, "total": 0, "data": []}
+        return {"fatal": True, "total": 0, "data": None}
 
     results = []
 
@@ -58,20 +42,56 @@ def score_call(text, call_type):
             "Score": score if condition else 0
         })
 
-    add("Script", "Greeting", 3, "hello" in text or "good morning" in text)
+    # Script
+    add("Script", "Opening greeting", 3,
+        bool(re.search(r"\b(hello|good morning|good evening)\b", text)))
+
     add("Script", "Brand intro", 3, "muthoot" in text)
+
     add("Script", "Closing", 4, "thank you" in text)
 
+    # Etiquette
     add("Etiquette", "Politeness", 4, "please" in text)
-    add("Clarity", "No slang", 4, "bro" not in text)
-    add("Professionalism", "Apology", 3, "sorry" in text)
 
-    add("Rapport", "Ownership", 4, "i will help" in text)
+    add("Etiquette", "Dead air avoided (proxy)", 3,
+        len(text.split()) > 30)
 
-    add("Objection", "Convincing", 10, "benefit" in text)
+    # Clarity
+    add("Clarity", "No slang", 4,
+        not re.search(r"\b(bro|dude)\b", text))
 
+    add("Clarity", "No fillers", 4,
+        "uh" not in text)
+
+    add("Clarity", "Understood customer", 4,
+        "i understand" in text or "got it" in text)
+
+    # Calmness
+    add("Calmness", "No interruption (proxy)", 5,
+        "wait" not in text)
+
+    # Professionalism
+    add("Professionalism", "Professional tone", 3,
+        bool(re.search(r"\b(sir|madam)\b", text)))
+
+    add("Professionalism", "Apology", 3,
+        "sorry" in text)
+
+    # Rapport
+    add("Rapport", "Ownership", 4,
+        "i will help" in text or "let me check" in text)
+
+    add("Rapport", "Acknowledgement", 3,
+        "understand" in text)
+
+    # Objection
+    add("Objection", "Convincing skills", 10,
+        "benefit" in text or "advantage" in text)
+
+    # Cross sell
     if call_type == "Sales":
-        add("Cross Sell", "Pitch", 10, "offer" in text)
+        add("Cross Sell", "Pitch", 10,
+            "offer" in text or "scheme" in text)
     else:
         add("Cross Sell", "Pitch", 0, False)
 
@@ -80,48 +100,65 @@ def score_call(text, call_type):
 
     return {"fatal": False, "total": total, "data": df}
 
+
 # ---------------------------
 # UI
 # ---------------------------
-st.set_page_config(page_title="Fast Call QA", layout="wide")
+st.title("📞 Call QA Analyzer (Audio or Transcript)")
 
-st.title("⚡ Fast Call QA Analyzer (No Torch Issues)")
+option = st.radio("Choose Input Type", ["Upload Audio", "Paste Transcript"])
 
-uploaded_file = st.file_uploader("Upload Audio", type=["mp3", "wav"])
+text = ""
 
-if uploaded_file:
-    st.audio(uploaded_file)
+# ---------------------------
+# AUDIO (no processing)
+# ---------------------------
+if option == "Upload Audio":
+    audio_file = st.file_uploader("Upload MP3/WAV", type=["mp3", "wav"])
 
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        tmp.write(uploaded_file.read())
-        path = tmp.name
+    if audio_file:
+        st.audio(audio_file)
+        st.warning("⚠️ Audio transcription disabled for stability. Please paste transcript below.")
 
-    with st.spinner("Transcribing..."):
-        text = clean_text(transcribe_audio(path))
+        text = st.text_area("Paste transcript for analysis")
 
-    col1, col2 = st.columns(2)
+# ---------------------------
+# TEXT
+# ---------------------------
+else:
+    text = st.text_area("Paste Call Transcript Here")
 
-    with col1:
-        st.subheader("📝 Transcript")
-        st.write(text)
+# ---------------------------
+# PROCESS
+# ---------------------------
+if st.button("Analyze Call"):
 
-    call_type = classify_call(text)
-
-    with col2:
-        st.subheader("📊 Call Type")
-        st.write(call_type)
-
-    result = score_call(text, call_type)
-
-    st.subheader("📈 QA Score")
-
-    if result["fatal"]:
-        st.error("❌ Zero tolerance triggered → Score = 0")
+    if not text.strip():
+        st.error("Please provide transcript")
     else:
-        st.success(f"Total Score: {result['total']}")
-        st.dataframe(result["data"], use_container_width=True)
+        text = clean_text(text)
 
-        csv = result["data"].to_csv(index=False).encode("utf-8")
-        st.download_button("⬇ Download Report", csv, "report.csv")
+        call_type = classify_call(text)
 
-    os.remove(path)
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("📝 Cleaned Transcript")
+            st.write(text)
+
+        with col2:
+            st.subheader("📊 Call Type")
+            st.write(call_type)
+
+        result = score_call(text, call_type)
+
+        st.subheader("📈 QA Score")
+
+        if result["fatal"]:
+            st.error("❌ Zero Tolerance Triggered → Score = 0")
+        else:
+            st.success(f"Total Score: {result['total']}")
+            st.dataframe(result["data"], use_container_width=True)
+
+            csv = result["data"].to_csv(index=False).encode("utf-8")
+            st.download_button("⬇ Download Report", csv, "qa_report.csv")
