@@ -5,3 +5,6 @@ transformers
 numpy
 torch==2.3.0
 openai-whisper>=2023.9.0
+pandas
+langdetect
+deep-translator
