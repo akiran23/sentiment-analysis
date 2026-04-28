@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-
-from deep_translator import GoogleTranslator
+translated = transcript
 
 # -----------------------------
 # PAGE CONFIG
