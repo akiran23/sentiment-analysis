@@ -6,4 +6,4 @@ ffmpeg-python
 streamlit
 vosk
 pydub
-torch
+torch==2.0.1
