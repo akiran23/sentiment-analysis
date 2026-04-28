@@ -6,7 +6,7 @@ import re
 # ---------------------------
 # Setup
 # ---------------------------
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
 
 # ---------------------------
 # Transcription (API)
