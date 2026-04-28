@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-translated = transcript
+deep_translator import GoogleTranslator
 
 # -----------------------------
 # PAGE CONFIG
@@ -11,6 +11,17 @@ st.title("📞 AI Call QA Scoring System (Multilingual + Parameter-wise)")
 # -----------------------------
 # LANGUAGE FUNCTIONS
 # -----------------------------
+
+try:
+    from deep_translator import GoogleTranslator
+    def translate_to_english(text):
+        try:
+            return GoogleTranslator(source='auto', target='en').translate(text)
+        except:
+            return text
+except:
+    def translate_to_english(text):
+        return text
 def detect_language(text):
     lang, _ = langid.classify(text)
     return lang
